@@ -31,8 +31,8 @@ This MCP server provides secure access to Windows command-line functionality thr
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/mcp-server-commandline.git
-   cd mcp-server-commandline
+   git clone https://github.com/alxspiker/Windows-Command-Line-MCP-Server.git
+   cd Windows-Command-Line-MCP-Server
    ```
 
 2. Install dependencies:
