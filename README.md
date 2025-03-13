@@ -2,7 +2,7 @@
 
 A secure Model Context Protocol (MCP) server that enables AI models to interact with Windows command-line functionality safely and efficiently.
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
 ## Overview
@@ -64,6 +64,30 @@ Create new projects safely with the built-in project creation tool:
 6. **get_network_info**: Retrieve network adapter information
 7. **get_scheduled_tasks**: List and query system tasks
 8. **get_service_info**: Manage and query Windows services
+9. **list_allowed_commands**: List all commands that can be executed by the server
+
+## Using with Claude for Desktop
+
+To use this server with Claude for Desktop:
+
+1. Build the server using the setup instructions above
+2. Add it to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "windows-cmd": {
+      "command": "node",
+      "args": ["/path/to/dist/index.js"]
+    }
+  }
+}
+```
+
+Replace `/path/to/dist/index.js` with the absolute path to the built `index.js` file in the `dist` directory.
+
+3. Restart Claude for Desktop
+4. You can now use the tools by asking Claude to perform Windows system operations
 
 ## Security Considerations
 
@@ -116,6 +140,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Version History
 
+- **0.3.0**: Implemented all tools mentioned in README (system info, network info, process management, service info)
 - **0.2.0**: Added project creation, expanded development tools
 - **0.1.0**: Initial release with basic command execution capabilities
 
