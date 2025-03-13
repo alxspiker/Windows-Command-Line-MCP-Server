@@ -218,12 +218,12 @@ User: ${os.userInfo().username}
     }
   }
 
-  async getNetworkInfo(interface?: string): Promise<string> {
+  async getNetworkInfo(networkInterface?: string): Promise<string> {
     try {
-      if (interface) {
+      if (networkInterface) {
         // Get info for specific interface
-        const { stdout } = await execAsync(`ipconfig /all | find "${interface}" /i`);
-        return stdout || `Interface "${interface}" not found`;
+        const { stdout } = await execAsync(`ipconfig /all | find "${networkInterface}" /i`);
+        return stdout || `Interface "${networkInterface}" not found`;
       } else {
         // Get basic network info
         const { stdout } = await execAsync('ipconfig');
@@ -440,7 +440,7 @@ function createMCPServer() {
       description: "Retrieve network configuration information including IP addresses, adapters, and DNS settings. Can be filtered to a specific interface.",
       inputSchema: zodToJsonSchema(
         z.object({
-          interface: z.string().optional().describe('Optional interface name to filter results')
+          networkInterface: z.string().optional().describe('Optional interface name to filter results')
         })
       )
     },
@@ -591,14 +591,14 @@ function createMCPServer() {
 
         case "get_network_info": {
           const parsed = z.object({
-            interface: z.string().optional()
+            networkInterface: z.string().optional()
           }).safeParse(args);
 
           if (!parsed.success) {
             throw new Error(`Invalid arguments: ${parsed.error}`);
           }
           
-          const { interface: networkInterface } = parsed.data;
+          const { networkInterface } = parsed.data;
           const output = await systemInfoManager.getNetworkInfo(networkInterface);
           
           return {
