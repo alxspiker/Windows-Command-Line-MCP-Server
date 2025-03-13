@@ -17,11 +17,13 @@ import * as fs from 'fs';
 
 // Promisify exec and other async operations
 const execAsync = promisify(exec);
+const readFileAsync = promisify(fs.readFile);
+const writeFileAsync = promisify(fs.writeFile);
 const mkdirAsync = promisify(fs.mkdir);
 
-// Default allowed commands
-const DEFAULT_ALLOWED_COMMANDS = [
-  // System information commands
+// Enhanced allowed commands
+const DEFAULT_SAFE_COMMANDS = [
+  // Original safe commands
   'dir', 'echo', 'whoami', 'hostname', 'systeminfo', 'ver',
   'ipconfig', 'ping', 'tasklist', 'time', 'date', 'type',
   'find', 'findstr', 'where', 'help', 'netstat', 'sc',
@@ -32,37 +34,41 @@ const DEFAULT_ALLOWED_COMMANDS = [
   'python', 'pip', 'nvm', 'pnpm'
 ];
 
-// Load configuration from file if exists
-function loadConfiguration(): { allowedCommands?: string[] } {
-  const configPath = path.join(process.cwd(), 'config.json');
-  if (fs.existsSync(configPath)) {
-    try {
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      return JSON.parse(configContent);
-    } catch (error) {
-      console.error(`Failed to load config file: ${error}`);
-    }
-  }
-  return {};
-}
+// Dangerous commands that are always blocked
+const DANGEROUS_COMMANDS = [
+  'format', 'del', 'rm', 'rmdir', 'rd', 'diskpart',
+  'net user', 'attrib', 'reg delete', 'shutdown', 'logoff'
+];
+
+// Safe project creation configuration
+const SAFE_PROJECT_ROOT = path.join(os.homedir(), 'AIProjects');
 
 // Security and validation utilities
 class SecurityManager {
   private allowedCommands: string[];
+  private allowUnsafeCommands: boolean;
 
-  constructor(allowedCommands?: string[]) {
-    // Use provided commands, config file commands, or defaults (in that order of priority)
-    const config = loadConfiguration();
-    this.allowedCommands = allowedCommands || 
-                          config.allowedCommands || 
-                          DEFAULT_ALLOWED_COMMANDS;
+  constructor(allowedCommands?: string[], allowUnsafe = false) {
+    this.allowedCommands = allowedCommands || DEFAULT_SAFE_COMMANDS;
+    this.allowUnsafeCommands = allowUnsafe;
   }
 
   validateCommand(command: string): { isValid: boolean; reason?: string } {
-    // Extract the base command (before any arguments)
+    // If unsafe mode, only block truly dangerous commands
+    if (this.allowUnsafeCommands) {
+      for (const dangerous of DANGEROUS_COMMANDS) {
+        if (command.toLowerCase().includes(dangerous.toLowerCase())) {
+          return { 
+            isValid: false, 
+            reason: `Blocked dangerous operation: ${dangerous}` 
+          };
+        }
+      }
+      return { isValid: true };
+    }
+
+    // Check if the command starts with any of the allowed commands
     const commandBase = command.split(' ')[0].toLowerCase();
-    
-    // Check if the command is in the allowed list
     if (!this.allowedCommands.some(cmd => commandBase === cmd.toLowerCase())) {
       return { 
         isValid: false, 
@@ -174,9 +180,6 @@ class ProjectManager {
   }
 }
 
-// Safe project creation configuration
-const SAFE_PROJECT_ROOT = path.join(os.homedir(), 'AIProjects');
-
 // System Information Utility
 class SystemInfoManager {
   private securityManager: SecurityManager;
@@ -200,7 +203,15 @@ class SystemInfoManager {
         const totalMemory = Math.round(os.totalmem() / (1024 * 1024 * 1024));
         const freeMemory = Math.round(os.freemem() / (1024 * 1024 * 1024));
         
-        return `\nSystem Information:\nHostname: ${hostname}\nOS: ${osType} ${osRelease} (${osArch})\nCPU: ${cpuInfo}\nMemory: ${freeMemory}GB free of ${totalMemory}GB\nUptime: ${Math.floor(os.uptime() / 3600)} hours ${Math.floor((os.uptime() % 3600) / 60)} minutes\nUser: ${os.userInfo().username}\n        `.trim();
+        return `
+System Information:
+Hostname: ${hostname}
+OS: ${osType} ${osRelease} (${osArch})
+CPU: ${cpuInfo}
+Memory: ${freeMemory}GB free of ${totalMemory}GB
+Uptime: ${Math.floor(os.uptime() / 3600)} hours ${Math.floor((os.uptime() % 3600) / 60)} minutes
+User: ${os.userInfo().username}
+        `.trim();
       }
     } catch (error) {
       throw new Error(`Failed to retrieve system information: ${error instanceof Error ? error.message : String(error)}`);
@@ -211,8 +222,8 @@ class SystemInfoManager {
     try {
       if (networkInterface) {
         // Get info for specific interface
-        const { stdout } = await execAsync(`ipconfig /all | find \"${networkInterface}\" /i`);
-        return stdout || `Interface \"${networkInterface}\" not found`;
+        const { stdout } = await execAsync(`ipconfig /all | find "${networkInterface}" /i`);
+        return stdout || `Interface "${networkInterface}" not found`;
       } else {
         // Get basic network info
         const { stdout } = await execAsync('ipconfig');
@@ -226,7 +237,7 @@ class SystemInfoManager {
   async listRunningProcesses(filter?: string): Promise<string> {
     try {
       const command = filter 
-        ? `tasklist | findstr /i \"${filter}\"`
+        ? `tasklist | findstr /i "${filter}"`
         : 'tasklist';
         
       const { stdout } = await execAsync(command);
@@ -242,10 +253,10 @@ class SystemInfoManager {
       
       if (action === 'query') {
         command = serviceName 
-          ? `sc query \"${serviceName}\"`
+          ? `sc query "${serviceName}"`
           : `sc query state= all`;
       } else if (action === 'status' && serviceName) {
-        command = `sc query \"${serviceName}\"`;
+        command = `sc query "${serviceName}"`;
       } else {
         throw new Error('Invalid service action or missing service name');
       }
@@ -263,10 +274,10 @@ class SystemInfoManager {
       
       if (action === 'query') {
         command = taskName 
-          ? `schtasks /query /tn \"${taskName}\" /fo list /v`
+          ? `schtasks /query /tn "${taskName}" /fo list /v`
           : `schtasks /query /fo list /v`;
       } else if (action === 'status' && taskName) {
-        command = `schtasks /query /tn \"${taskName}\" /fo list /v`;
+        command = `schtasks /query /tn "${taskName}" /fo list /v`;
       } else {
         throw new Error('Invalid task action or missing task name');
       }
@@ -313,11 +324,11 @@ class SystemInfoManager {
     const tempScriptPath = path.join(os.tmpdir(), `ps_script_${Date.now()}.ps1`);
     
     try {
-      // Skip async file operations that cause TypeScript errors - use sync version instead
-      fs.writeFileSync(tempScriptPath, script, 'utf8');
+      // Write script to temp file
+      await writeFileAsync(tempScriptPath, script);
       
       // Execute PowerShell with script file
-      const command = `powershell -ExecutionPolicy Bypass -File \"${tempScriptPath}\"`;
+      const command = `powershell -ExecutionPolicy Bypass -File "${tempScriptPath}"`;
       const options: any = { timeout };
       if (workingDir) {
         options.cwd = workingDir;
@@ -345,11 +356,13 @@ class SystemInfoManager {
 function createMCPServer() {
   // Parse command line arguments
   const args = process.argv.slice(2);
+  const allowUnsafe = args.includes('--allow-all');
   const customAllowedCommands = args.filter(arg => !arg.startsWith('--'));
 
-  // Initialize security manager with custom allowed commands
+  // Initialize security manager
   const securityManager = new SecurityManager(
-    customAllowedCommands.length > 0 ? customAllowedCommands : undefined
+    customAllowedCommands.length > 0 ? customAllowedCommands : undefined, 
+    allowUnsafe
   );
 
   // Initialize project manager
@@ -369,3 +382,313 @@ function createMCPServer() {
         tools: {}
       }
     }
+  );
+
+  // List of available tools
+  const availableTools = [
+    {
+      name: "create_project",
+      description: "Create a new project with safe, predefined templates",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          type: z.string().describe('Project type (react, node, python)'),
+          name: z.string().describe('Project name'),
+          template: z.string().optional().describe('Optional project template')
+        })
+      )
+    },
+    {
+      name: "execute_command",
+      description: "Execute a Windows command and return its output. Only commands in the allowed list can be executed. This tool should be used for running simple commands like 'dir', 'echo', etc.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          command: z.string().describe('The command to execute'),
+          timeout: z.number().optional().default(30000).describe('Timeout in milliseconds'),
+          workingDir: z.string().optional().describe('Working directory for the command')
+        })
+      )
+    },
+    {
+      name: "execute_powershell",
+      description: "Execute a PowerShell script and return its output. This allows for more complex operations and script execution. PowerShell must be in the allowed commands list.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          script: z.string().describe('PowerShell script to execute'),
+          timeout: z.number().optional().default(30000).describe('Timeout in milliseconds'),
+          workingDir: z.string().optional().describe('Working directory for the script')
+        })
+      )
+    },
+    {
+      name: "list_running_processes",
+      description: "List all running processes on the system. Can be filtered by providing an optional filter string that will match against process names.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          filter: z.string().optional().describe('Optional filter string to match against process names')
+        })
+      )
+    },
+    {
+      name: "get_system_info",
+      description: "Retrieve system information including OS, hardware, and user details. Can provide basic or full details.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          detail: z.enum(['basic', 'full']).optional().default('basic').describe('Level of detail')
+        })
+      )
+    },
+    {
+      name: "get_network_info",
+      description: "Retrieve network configuration information including IP addresses, adapters, and DNS settings. Can be filtered to a specific interface.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          networkInterface: z.string().optional().describe('Optional interface name to filter results')
+        })
+      )
+    },
+    {
+      name: "get_scheduled_tasks",
+      description: "Retrieve information about scheduled tasks on the system. Can query all tasks or get detailed status of a specific task.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          action: z.enum(['query', 'status']).optional().default('query').describe('Action to perform'),
+          taskName: z.string().optional().describe('Name of the specific task (optional)')
+        })
+      )
+    },
+    {
+      name: "get_service_info",
+      description: "Retrieve information about Windows services. Can query all services or get detailed status of a specific service.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          action: z.enum(['query', 'status']).optional().default('query').describe('Action to perform'),
+          serviceName: z.string().optional().describe('Service name to get info about (optional)')
+        })
+      )
+    },
+    {
+      name: "list_allowed_commands",
+      description: "List all commands that are allowed to be executed by this server. This helps understand what operations are permitted.",
+      inputSchema: zodToJsonSchema(
+        z.object({})
+      )
+    }
+  ];
+
+  // Set up request handlers
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+      tools: availableTools
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    try {
+      const { name, arguments: args } = request.params;
+
+      switch (name) {
+        case "create_project": {
+          const parsed = z.object({
+            type: z.string(),
+            name: z.string(),
+            template: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          const { type, name, template } = parsed.data;
+          const projectPath = await projectManager.createProject(type, name, template);
+          return {
+            content: [{ 
+              type: "text", 
+              text: `Project created successfully at: ${projectPath}` 
+            }]
+          };
+        }
+
+        case "execute_command": {
+          const parsed = z.object({
+            command: z.string(),
+            timeout: z.number().optional().default(30000),
+            workingDir: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { command, timeout, workingDir } = parsed.data;
+          const output = await systemInfoManager.executeCommand(command, timeout, workingDir);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "execute_powershell": {
+          const parsed = z.object({
+            script: z.string(),
+            timeout: z.number().optional().default(30000),
+            workingDir: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { script, timeout, workingDir } = parsed.data;
+          const output = await systemInfoManager.executePowerShell(script, timeout, workingDir);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "list_running_processes": {
+          const parsed = z.object({
+            filter: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { filter } = parsed.data;
+          const output = await systemInfoManager.listRunningProcesses(filter);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "get_system_info": {
+          const parsed = z.object({
+            detail: z.enum(['basic', 'full']).optional().default('basic')
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { detail } = parsed.data;
+          const output = await systemInfoManager.getSystemInfo(detail);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "get_network_info": {
+          const parsed = z.object({
+            networkInterface: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { networkInterface } = parsed.data;
+          const output = await systemInfoManager.getNetworkInfo(networkInterface);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "get_scheduled_tasks": {
+          const parsed = z.object({
+            action: z.enum(['query', 'status']).optional().default('query'),
+            taskName: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { action, taskName } = parsed.data;
+          const output = await systemInfoManager.getScheduledTasks(action, taskName);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "get_service_info": {
+          const parsed = z.object({
+            action: z.enum(['query', 'status']).optional().default('query'),
+            serviceName: z.string().optional()
+          }).safeParse(args);
+
+          if (!parsed.success) {
+            throw new Error(`Invalid arguments: ${parsed.error}`);
+          }
+          
+          const { action, serviceName } = parsed.data;
+          const output = await systemInfoManager.getServiceInfo(action, serviceName);
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: output 
+            }]
+          };
+        }
+
+        case "list_allowed_commands": {
+          const allowedCommands = securityManager.getAllowedCommands();
+          
+          return {
+            content: [{ 
+              type: "text", 
+              text: `Allowed commands:\n${allowedCommands.join('\n')}` 
+            }]
+          };
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        isError: true,
+      };
+    }
+  });
+
+  return server;
+}
+
+// Run the server
+async function runServer() {
+  const server = createMCPServer();
+  const transport = new StdioServerTransport();
+  
+  await server.connect(transport);
+  console.error("Enhanced Windows Command Line Server running on stdio");
+}
+
+runServer().catch((error) => {
+  console.error("Fatal error running server:", error);
+  process.exit(1);
+});
