@@ -196,33 +196,48 @@ function createMCPServer() {
   // Initialize project manager
   const projectManager = new ProjectManager(securityManager);
 
-  // Create MCP Server
+  // Create MCP Server with explicit tool support
   const server = new Server(
     {
       name: "windows-commandline-server",
-      version: "0.2.0", // Updated version
+      version: "0.2.0",
+      capabilities: {
+        tools: {
+          list: () => {
+            // Implement the list of available tools
+            return [
+              {
+                name: "create_project",
+                description: "Create a new project with safe, predefined templates",
+                inputSchema: zodToJsonSchema(
+                  z.object({
+                    type: z.string().describe('Project type (react, node, python)'),
+                    name: z.string().describe('Project name'),
+                    template: z.string().optional().describe('Optional project template')
+                  })
+                )
+              }
+            ];
+          }
+        }
+      }
     }
   );
-
-  // Schema definitions for new tools
-  const CreateProjectSchema = z.object({
-    type: z.string().describe('Project type (react, node, python)'),
-    name: z.string().describe('Project name'),
-    template: z.string().optional().describe('Optional project template')
-  });
-
-  // Tracking available tools
-  const availableTools: any[] = [];
 
   // Set up request handlers
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
-        ...availableTools,
         {
           name: "create_project",
           description: "Create a new project with safe, predefined templates",
-          inputSchema: zodToJsonSchema(CreateProjectSchema)
+          inputSchema: zodToJsonSchema(
+            z.object({
+              type: z.string().describe('Project type (react, node, python)'),
+              name: z.string().describe('Project name'),
+              template: z.string().optional().describe('Optional project template')
+            })
+          )
         }
       ]
     };
@@ -234,7 +249,12 @@ function createMCPServer() {
 
       switch (name) {
         case "create_project": {
-          const parsed = CreateProjectSchema.safeParse(args);
+          const parsed = z.object({
+            type: z.string(),
+            name: z.string(),
+            template: z.string().optional()
+          }).safeParse(args);
+
           if (!parsed.success) {
             throw new Error(`Invalid arguments: ${parsed.error}`);
           }
@@ -249,8 +269,6 @@ function createMCPServer() {
         }
 
         default:
-          // Fallback to existing tool handlers (from previous implementation)
-          // (Previous tool handling code would go here)
           throw new Error(`Unknown tool: ${name}`);
       }
     } catch (error) {
