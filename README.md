@@ -47,8 +47,45 @@ npm run build
 
 ### Command Line Options
 - Default mode: Uses predefined safe commands
-- `--allow-all`: Run in extended mode (with additional precautions)
 - Custom command lists can be specified as arguments
+
+### Configuration
+
+#### Command Whitelisting
+
+You can customize which commands are allowed to be executed in three ways:
+
+1. **Config File**: Create a `config.json` file in the same directory as the server with your allowed commands:
+
+```json
+{
+  "allowedCommands": [
+    "dir",
+    "echo",
+    "type",
+    "findstr",
+    "systeminfo",
+    "tasklist",
+    "ipconfig",
+    "netstat",
+    "hostname"
+    // Add your own allowed commands here
+  ]
+}
+```
+
+2. **Command-line Arguments**: Specify commands directly as arguments:
+
+```bash
+node dist/index.js dir echo npm git
+```
+
+3. **Default List**: If no custom list is provided, the server uses a default set of safe commands.
+
+The server follows this priority order:
+1. Command-line arguments (highest priority)
+2. Configuration file settings
+3. Default safe commands (lowest priority)
 
 ### Project Creation
 Create new projects safely with the built-in project creation tool:
@@ -86,6 +123,38 @@ To use this server with Claude for Desktop:
 
 Replace `/path/to/dist/index.js` with the absolute path to the built `index.js` file in the `dist` directory.
 
+### Custom Command Configuration with Claude
+
+You can also specify your allowed commands when configuring the server in Claude:
+
+```json
+{
+  "mcpServers": {
+    "windows-cmd": {
+      "command": "node",
+      "args": [
+        "/path/to/dist/index.js",
+        "dir", "echo", "type", "findstr", "systeminfo"
+      ]
+    }
+  }
+}
+```
+
+Alternatively, create a config.json file and reference the directory in your configuration:
+
+```json
+{
+  "mcpServers": {
+    "windows-cmd": {
+      "command": "node",
+      "args": ["/path/to/dist/index.js"],
+      "cwd": "/path/to/config/directory"
+    }
+  }
+}
+```
+
 3. Restart Claude for Desktop
 4. You can now use the tools by asking Claude to perform Windows system operations
 
@@ -97,29 +166,6 @@ By default, only safe commands are permitted:
 - Network configuration
 - Process management
 - Development tool interactions
-
-### Blocked Operations
-Dangerous commands are always blocked, including:
-- Disk formatting
-- User management
-- System shutdown
-- Critical registry modifications
-
-## Configuration
-
-Customize the server's behavior by specifying allowed commands or using configuration flags.
-
-### Example
-```bash
-# Run with default safe commands
-node dist/index.js
-
-# Run with specific allowed commands
-node dist/index.js dir echo npm git
-
-# Run in extended mode (use with caution)
-node dist/index.js --allow-all
-```
 
 ## Contributing
 
@@ -140,6 +186,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Version History
 
+- **0.4.0**: Added user-configurable command whitelist through config.json
 - **0.3.0**: Implemented all tools mentioned in README (system info, network info, process management, service info)
 - **0.2.0**: Added project creation, expanded development tools
 - **0.1.0**: Initial release with basic command execution capabilities
