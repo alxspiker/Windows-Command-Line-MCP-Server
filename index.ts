@@ -371,11 +371,13 @@ function createMCPServer() {
   // Initialize system info manager
   const systemInfoManager = new SystemInfoManager(securityManager);
 
-  // Create MCP Server
+  // Create MCP Server with correct initialization
   const server = new Server(
     {
       name: "windows-commandline-server",
-      version: "0.3.0",
+      version: "0.3.0"
+    },
+    {
       capabilities: {
         tools: {}
       }
