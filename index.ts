@@ -201,10 +201,6 @@ function createMCPServer() {
     {
       name: "windows-commandline-server",
       version: "0.2.0", // Updated version
-    },
-    {
-      // Initial empty tools configuration
-      tools: {},
     }
   );
 
@@ -215,14 +211,14 @@ function createMCPServer() {
     template: z.string().optional().describe('Optional project template')
   });
 
+  // Tracking available tools
+  const availableTools: any[] = [];
+
   // Set up request handlers
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // Use the server's initial tools or an empty object
-    const baseTool = server.config.tools || {};
-    
     return {
       tools: [
-        ...Object.values(baseTool),
+        ...availableTools,
         {
           name: "create_project",
           description: "Create a new project with safe, predefined templates",
