@@ -1,694 +1,472 @@
-#!/usr/bin/env node
-
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ToolSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs';
+import { execSync } from "child_process";
 
-// Promisify exec and other async operations
-const execAsync = promisify(exec);
-const readFileAsync = promisify(fs.readFile);
-const writeFileAsync = promisify(fs.writeFile);
-const mkdirAsync = promisify(fs.mkdir);
+// Create server instance
+const server = new McpServer({
+  name: "windows-command-line",
+  version: "0.3.0",
+});
 
-// Enhanced allowed commands
-const DEFAULT_SAFE_COMMANDS = [
-  // Original safe commands
-  'dir', 'echo', 'whoami', 'hostname', 'systeminfo', 'ver',
-  'ipconfig', 'ping', 'tasklist', 'time', 'date', 'type',
-  'find', 'findstr', 'where', 'help', 'netstat', 'sc',
-  'schtasks', 'powershell', 'powershell.exe',
-  
-  // Development tool commands
-  'npm', 'yarn', 'node', 'git', 'code', 
-  'python', 'pip', 'nvm', 'pnpm'
-];
-
-// Dangerous commands that are always blocked
-const DANGEROUS_COMMANDS = [
-  'format', 'del', 'rm', 'rmdir', 'rd', 'diskpart',
-  'net user', 'attrib', 'reg delete', 'shutdown', 'logoff'
-];
-
-// Safe project creation configuration
-const SAFE_PROJECT_ROOT = path.join(os.homedir(), 'AIProjects');
-
-// Security and validation utilities
-class SecurityManager {
-  private allowedCommands: string[];
-  private allowUnsafeCommands: boolean;
-
-  constructor(allowedCommands?: string[], allowUnsafe = false) {
-    this.allowedCommands = allowedCommands || DEFAULT_SAFE_COMMANDS;
-    this.allowUnsafeCommands = allowUnsafe;
-  }
-
-  validateCommand(command: string): { isValid: boolean; reason?: string } {
-    // If unsafe mode, only block truly dangerous commands
-    if (this.allowUnsafeCommands) {
-      for (const dangerous of DANGEROUS_COMMANDS) {
-        if (command.toLowerCase().includes(dangerous.toLowerCase())) {
-          return { 
-            isValid: false, 
-            reason: `Blocked dangerous operation: ${dangerous}` 
-          };
-        }
-      }
-      return { isValid: true };
-    }
-
-    // Check if the command starts with any of the allowed commands
-    const commandBase = command.split(' ')[0].toLowerCase();
-    if (!this.allowedCommands.some(cmd => commandBase === cmd.toLowerCase())) {
-      return { 
-        isValid: false, 
-        reason: `Command '${commandBase}' is not in the allowed list` 
-      };
-    }
-
-    return { isValid: true };
-  }
-
-  getAllowedCommands(): string[] {
-    return this.allowedCommands;
-  }
-}
-
-// Project Creation Utility
-class ProjectManager {
-  private securityManager: SecurityManager;
-
-  constructor(securityManager: SecurityManager) {
-    this.securityManager = securityManager;
-  }
-
-  async createProject(type: string, name: string, template?: string): Promise<string> {
-    // Validate project name and type
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      throw new Error('Invalid project name. Use only alphanumeric characters, underscores, and hyphens.');
-    }
-
-    // Ensure safe project root exists
-    await this.ensureSafeProjectRoot();
-
-    const projectPath = path.join(SAFE_PROJECT_ROOT, name);
-
-    // Prevent overwriting existing projects
-    if (fs.existsSync(projectPath)) {
-      throw new Error(`Project '${name}' already exists.`);
-    }
-
+// Register the list_running_processes tool
+server.tool(
+  "list_running_processes",
+  "List all running processes on the system. Can be filtered by providing an optional filter string that will match against process names.",
+  {
+    filter: z.string().optional().describe("Optional filter string to match against process names"),
+  },
+  async ({ filter }) => {
     try {
-      // Create project directory
-      await mkdirAsync(projectPath, { recursive: true });
-
-      // Project creation based on type
-      switch (type.toLowerCase()) {
-        case 'react':
-          await this.createReactProject(projectPath, template);
-          break;
-        case 'node':
-          await this.createNodeProject(projectPath, template);
-          break;
-        case 'python':
-          await this.createPythonProject(projectPath, template);
-          break;
-        default:
-          throw new Error(`Unsupported project type: ${type}`);
-      }
-
-      return projectPath;
-    } catch (error) {
-      // Clean up partially created project
-      try {
-        await fs.promises.rm(projectPath, { recursive: true, force: true });
-      } catch {}
-      throw error;
-    }
-  }
-
-  private async ensureSafeProjectRoot() {
-    await mkdirAsync(SAFE_PROJECT_ROOT, { recursive: true });
-  }
-
-  private async createReactProject(projectPath: string, template?: string) {
-    const createCommand = template 
-      ? `npx create-react-app ${projectPath} --template ${template}`
-      : `npx create-react-app ${projectPath}`;
-    
-    await this.runSafeCommand(createCommand);
-  }
-
-  private async createNodeProject(projectPath: string, template?: string) {
-    // Initialize with npm
-    await this.runSafeCommand(`cd ${projectPath} && npm init -y`);
-    
-    // Add optional template dependencies
-    if (template) {
-      await this.runSafeCommand(`cd ${projectPath} && npm install ${template}`);
-    }
-  }
-
-  private async createPythonProject(projectPath: string, template?: string) {
-    // Create virtual environment
-    await this.runSafeCommand(`cd ${projectPath} && python -m venv venv`);
-    
-    // Optional template or initial package
-    if (template) {
-      await this.runSafeCommand(`cd ${projectPath} && venv/Scripts/pip install ${template}`);
-    }
-  }
-
-  private async runSafeCommand(command: string) {
-    // Validate and execute command
-    const validation = this.securityManager.validateCommand(command.split(' ')[0]);
-    if (!validation.isValid) {
-      throw new Error(validation.reason);
-    }
-
-    return execAsync(command);
-  }
-}
-
-// System Information Utility
-class SystemInfoManager {
-  private securityManager: SecurityManager;
-
-  constructor(securityManager: SecurityManager) {
-    this.securityManager = securityManager;
-  }
-
-  async getSystemInfo(detail: string = 'basic'): Promise<string> {
-    try {
-      if (detail === 'full') {
-        const { stdout } = await execAsync('systeminfo');
-        return stdout;
-      } else {
-        // Basic system info
-        const hostname = os.hostname();
-        const osType = os.type();
-        const osRelease = os.release();
-        const osArch = os.arch();
-        const cpuInfo = os.cpus()[0]?.model || 'Unknown CPU';
-        const totalMemory = Math.round(os.totalmem() / (1024 * 1024 * 1024));
-        const freeMemory = Math.round(os.freemem() / (1024 * 1024 * 1024));
-        
-        return `
-System Information:
-Hostname: ${hostname}
-OS: ${osType} ${osRelease} (${osArch})
-CPU: ${cpuInfo}
-Memory: ${freeMemory}GB free of ${totalMemory}GB
-Uptime: ${Math.floor(os.uptime() / 3600)} hours ${Math.floor((os.uptime() % 3600) / 60)} minutes
-User: ${os.userInfo().username}
-        `.trim();
-      }
-    } catch (error) {
-      throw new Error(`Failed to retrieve system information: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async getNetworkInfo(networkInterface?: string): Promise<string> {
-    try {
-      if (networkInterface) {
-        // Get info for specific interface
-        const { stdout } = await execAsync(`ipconfig /all | find "${networkInterface}" /i`);
-        return stdout || `Interface "${networkInterface}" not found`;
-      } else {
-        // Get basic network info
-        const { stdout } = await execAsync('ipconfig');
-        return stdout;
-      }
-    } catch (error) {
-      throw new Error(`Failed to retrieve network information: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async listRunningProcesses(filter?: string): Promise<string> {
-    try {
-      const command = filter 
-        ? `tasklist | findstr /i "${filter}"`
-        : 'tasklist';
-        
-      const { stdout } = await execAsync(command);
-      return stdout || 'No matching processes found';
-    } catch (error) {
-      throw new Error(`Failed to list processes: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async getServiceInfo(action: string = 'query', serviceName?: string): Promise<string> {
-    try {
-      let command: string;
+      let cmd = "powershell.exe -Command \"Get-Process";
       
-      if (action === 'query') {
-        command = serviceName 
-          ? `sc query "${serviceName}"`
-          : `sc query state= all`;
-      } else if (action === 'status' && serviceName) {
-        command = `sc query "${serviceName}"`;
-      } else {
-        throw new Error('Invalid service action or missing service name');
+      if (filter) {
+        // Add filter if provided
+        cmd += ` | Where-Object { $_.ProcessName -like '*${filter}*' }`;
       }
       
-      const { stdout } = await execAsync(command);
-      return stdout || 'No service information found';
-    } catch (error) {
-      throw new Error(`Failed to get service info: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async getScheduledTasks(action: string = 'query', taskName?: string): Promise<string> {
-    try {
-      let command: string;
+      cmd += " | Select-Object Id, ProcessName, CPU, WorkingSet, Description | Format-Table -AutoSize | Out-String\"";
       
-      if (action === 'query') {
-        command = taskName 
-          ? `schtasks /query /tn "${taskName}" /fo list /v`
-          : `schtasks /query /fo list /v`;
-      } else if (action === 'status' && taskName) {
-        command = `schtasks /query /tn "${taskName}" /fo list /v`;
-      } else {
-        throw new Error('Invalid task action or missing task name');
-      }
+      const stdout = execSync(cmd);
       
-      const { stdout } = await execAsync(command);
-      return stdout || 'No scheduled task information found';
-    } catch (error) {
-      throw new Error(`Failed to get scheduled task info: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async executeCommand(command: string, timeout: number = 30000, workingDir?: string): Promise<string> {
-    // Validate command
-    const validation = this.securityManager.validateCommand(command);
-    if (!validation.isValid) {
-      throw new Error(validation.reason);
-    }
-
-    try {
-      // Execute with optional working directory
-      const options: any = { timeout };
-      if (workingDir) {
-        options.cwd = workingDir;
-      }
-      
-      const { stdout, stderr } = await execAsync(command, options);
-      if (stderr) {
-        console.error(`Command stderr: ${stderr}`);
-      }
-      return stdout || 'Command executed successfully (no output)';
-    } catch (error) {
-      throw new Error(`Command execution failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  async executePowerShell(script: string, timeout: number = 30000, workingDir?: string): Promise<string> {
-    // Validate PowerShell is allowed
-    const validation = this.securityManager.validateCommand('powershell');
-    if (!validation.isValid) {
-      throw new Error(validation.reason);
-    }
-
-    // Create a temporary script file
-    const tempScriptPath = path.join(os.tmpdir(), `ps_script_${Date.now()}.ps1`);
-    
-    try {
-      // Write script to temp file
-      await writeFileAsync(tempScriptPath, script);
-      
-      // Execute PowerShell with script file
-      const command = `powershell -ExecutionPolicy Bypass -File "${tempScriptPath}"`;
-      const options: any = { timeout };
-      if (workingDir) {
-        options.cwd = workingDir;
-      }
-      
-      const { stdout, stderr } = await execAsync(command, options);
-      if (stderr) {
-        console.error(`PowerShell stderr: ${stderr}`);
-      }
-      return stdout || 'PowerShell script executed successfully (no output)';
-    } catch (error) {
-      throw new Error(`PowerShell execution failed: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      // Clean up temporary file
-      try {
-        fs.unlinkSync(tempScriptPath);
-      } catch (e) {
-        console.error(`Failed to remove temp script: ${e}`);
-      }
-    }
-  }
-}
-
-// Main Server Setup
-function createMCPServer() {
-  // Parse command line arguments
-  const args = process.argv.slice(2);
-  const allowUnsafe = args.includes('--allow-all');
-  const customAllowedCommands = args.filter(arg => !arg.startsWith('--'));
-
-  // Initialize security manager
-  const securityManager = new SecurityManager(
-    customAllowedCommands.length > 0 ? customAllowedCommands : undefined, 
-    allowUnsafe
-  );
-
-  // Initialize project manager
-  const projectManager = new ProjectManager(securityManager);
-  
-  // Initialize system info manager
-  const systemInfoManager = new SystemInfoManager(securityManager);
-
-  // Create MCP Server with correct initialization
-  const server = new Server(
-    {
-      name: "windows-commandline-server",
-      version: "0.3.0"
-    },
-    {
-      capabilities: {
-        tools: {}
-      }
-    }
-  );
-
-  // List of available tools
-  const availableTools = [
-    {
-      name: "create_project",
-      description: "Create a new project with safe, predefined templates",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          type: z.string().describe('Project type (react, node, python)'),
-          name: z.string().describe('Project name'),
-          template: z.string().optional().describe('Optional project template')
-        })
-      )
-    },
-    {
-      name: "execute_command",
-      description: "Execute a Windows command and return its output. Only commands in the allowed list can be executed. This tool should be used for running simple commands like 'dir', 'echo', etc.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          command: z.string().describe('The command to execute'),
-          timeout: z.number().optional().default(30000).describe('Timeout in milliseconds'),
-          workingDir: z.string().optional().describe('Working directory for the command')
-        })
-      )
-    },
-    {
-      name: "execute_powershell",
-      description: "Execute a PowerShell script and return its output. This allows for more complex operations and script execution. PowerShell must be in the allowed commands list.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          script: z.string().describe('PowerShell script to execute'),
-          timeout: z.number().optional().default(30000).describe('Timeout in milliseconds'),
-          workingDir: z.string().optional().describe('Working directory for the script')
-        })
-      )
-    },
-    {
-      name: "list_running_processes",
-      description: "List all running processes on the system. Can be filtered by providing an optional filter string that will match against process names.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          filter: z.string().optional().describe('Optional filter string to match against process names')
-        })
-      )
-    },
-    {
-      name: "get_system_info",
-      description: "Retrieve system information including OS, hardware, and user details. Can provide basic or full details.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          detail: z.enum(['basic', 'full']).optional().default('basic').describe('Level of detail')
-        })
-      )
-    },
-    {
-      name: "get_network_info",
-      description: "Retrieve network configuration information including IP addresses, adapters, and DNS settings. Can be filtered to a specific interface.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          networkInterface: z.string().optional().describe('Optional interface name to filter results')
-        })
-      )
-    },
-    {
-      name: "get_scheduled_tasks",
-      description: "Retrieve information about scheduled tasks on the system. Can query all tasks or get detailed status of a specific task.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          action: z.enum(['query', 'status']).optional().default('query').describe('Action to perform'),
-          taskName: z.string().optional().describe('Name of the specific task (optional)')
-        })
-      )
-    },
-    {
-      name: "get_service_info",
-      description: "Retrieve information about Windows services. Can query all services or get detailed status of a specific service.",
-      inputSchema: zodToJsonSchema(
-        z.object({
-          action: z.enum(['query', 'status']).optional().default('query').describe('Action to perform'),
-          serviceName: z.string().optional().describe('Service name to get info about (optional)')
-        })
-      )
-    },
-    {
-      name: "list_allowed_commands",
-      description: "List all commands that are allowed to be executed by this server. This helps understand what operations are permitted.",
-      inputSchema: zodToJsonSchema(
-        z.object({})
-      )
-    }
-  ];
-
-  // Set up request handlers
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: availableTools
-    };
-  });
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    try {
-      const { name, arguments: args } = request.params;
-
-      switch (name) {
-        case "create_project": {
-          const parsed = z.object({
-            type: z.string(),
-            name: z.string(),
-            template: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          const { type, name, template } = parsed.data;
-          const projectPath = await projectManager.createProject(type, name, template);
-          return {
-            content: [{ 
-              type: "text", 
-              text: `Project created successfully at: ${projectPath}` 
-            }]
-          };
-        }
-
-        case "execute_command": {
-          const parsed = z.object({
-            command: z.string(),
-            timeout: z.number().optional().default(30000),
-            workingDir: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { command, timeout, workingDir } = parsed.data;
-          const output = await systemInfoManager.executeCommand(command, timeout, workingDir);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "execute_powershell": {
-          const parsed = z.object({
-            script: z.string(),
-            timeout: z.number().optional().default(30000),
-            workingDir: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { script, timeout, workingDir } = parsed.data;
-          const output = await systemInfoManager.executePowerShell(script, timeout, workingDir);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "list_running_processes": {
-          const parsed = z.object({
-            filter: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { filter } = parsed.data;
-          const output = await systemInfoManager.listRunningProcesses(filter);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "get_system_info": {
-          const parsed = z.object({
-            detail: z.enum(['basic', 'full']).optional().default('basic')
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { detail } = parsed.data;
-          const output = await systemInfoManager.getSystemInfo(detail);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "get_network_info": {
-          const parsed = z.object({
-            networkInterface: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { networkInterface } = parsed.data;
-          const output = await systemInfoManager.getNetworkInfo(networkInterface);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "get_scheduled_tasks": {
-          const parsed = z.object({
-            action: z.enum(['query', 'status']).optional().default('query'),
-            taskName: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { action, taskName } = parsed.data;
-          const output = await systemInfoManager.getScheduledTasks(action, taskName);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "get_service_info": {
-          const parsed = z.object({
-            action: z.enum(['query', 'status']).optional().default('query'),
-            serviceName: z.string().optional()
-          }).safeParse(args);
-
-          if (!parsed.success) {
-            throw new Error(`Invalid arguments: ${parsed.error}`);
-          }
-          
-          const { action, serviceName } = parsed.data;
-          const output = await systemInfoManager.getServiceInfo(action, serviceName);
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: output 
-            }]
-          };
-        }
-
-        case "list_allowed_commands": {
-          const allowedCommands = securityManager.getAllowedCommands();
-          
-          return {
-            content: [{ 
-              type: "text", 
-              text: `Allowed commands:\n${allowedCommands.join('\n')}` 
-            }]
-          };
-        }
-
-        default:
-          throw new Error(`Unknown tool: ${name}`);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
-        content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        content: [
+          {
+            type: "text",
+            text: stdout.toString(),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
         isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error listing processes: ${error}`,
+          },
+        ],
       };
     }
-  });
+  }
+);
 
-  return server;
-}
+// Register the get_system_info tool
+server.tool(
+  "get_system_info",
+  "Retrieve system information including OS, hardware, and user details. Can provide basic or full details.",
+  {
+    detail: z.enum(["basic", "full"]).default("basic").describe("Level of detail"),
+  },
+  async ({ detail }) => {
+    try {
+      let cmd = "powershell.exe -Command \"";
+      
+      if (detail === "basic") {
+        cmd += "$OS = Get-CimInstance Win32_OperatingSystem; " +
+              "$CS = Get-CimInstance Win32_ComputerSystem; " +
+              "$Processor = Get-CimInstance Win32_Processor; " +
+              "Write-Output 'OS: ' $OS.Caption $OS.Version; " +
+              "Write-Output 'Computer: ' $CS.Manufacturer $CS.Model; " +
+              "Write-Output 'CPU: ' $Processor.Name; " +
+              "Write-Output 'Memory: ' [math]::Round($OS.TotalVisibleMemorySize/1MB, 2) 'GB'";
+      } else {
+        cmd += "$OS = Get-CimInstance Win32_OperatingSystem; " +
+              "$CS = Get-CimInstance Win32_ComputerSystem; " +
+              "$Processor = Get-CimInstance Win32_Processor; " +
+              "$Disk = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3'; " +
+              "$Network = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object {$_.IPAddress -ne $null}; " +
+              "Write-Output '=== OPERATING SYSTEM ==='; " +
+              "Write-Output ('OS: ' + $OS.Caption + ' ' + $OS.Version); " +
+              "Write-Output ('Architecture: ' + $OS.OSArchitecture); " +
+              "Write-Output ('Install Date: ' + $OS.InstallDate); " +
+              "Write-Output ('Last Boot: ' + $OS.LastBootUpTime); " +
+              "Write-Output (''; '=== HARDWARE ==='); " +
+              "Write-Output ('Manufacturer: ' + $CS.Manufacturer); " +
+              "Write-Output ('Model: ' + $CS.Model); " +
+              "Write-Output ('Serial Number: ' + (Get-CimInstance Win32_BIOS).SerialNumber); " +
+              "Write-Output ('Processor: ' + $Processor.Name); " +
+              "Write-Output ('Cores: ' + $Processor.NumberOfCores); " +
+              "Write-Output ('Logical Processors: ' + $Processor.NumberOfLogicalProcessors); " +
+              "Write-Output ('Memory: ' + [math]::Round($OS.TotalVisibleMemorySize/1MB, 2) + ' GB'); " +
+              "Write-Output (''; '=== STORAGE ==='); " +
+              "foreach($drive in $Disk) { " +
+              "Write-Output ('Drive ' + $drive.DeviceID + ' - ' + [math]::Round($drive.Size/1GB, 2) + ' GB (Free: ' + [math]::Round($drive.FreeSpace/1GB, 2) + ' GB)') " +
+              "}; " +
+              "Write-Output (''; '=== NETWORK ==='); " +
+              "foreach($adapter in $Network) { " +
+              "Write-Output ('Adapter: ' + $adapter.Description); " +
+              "Write-Output ('  IP Address: ' + ($adapter.IPAddress[0])); " +
+              "Write-Output ('  MAC Address: ' + $adapter.MACAddress); " +
+              "Write-Output ('  Gateway: ' + ($adapter.DefaultIPGateway -join ', ')); " +
+              "}";
+      }
+      
+      cmd += "\"";
+      
+      const stdout = execSync(cmd);
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: stdout.toString(),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error retrieving system info: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
 
-// Run the server
-async function runServer() {
-  const server = createMCPServer();
+// Register the get_network_info tool
+server.tool(
+  "get_network_info",
+  "Retrieve network configuration information including IP addresses, adapters, and DNS settings. Can be filtered to a specific interface.",
+  {
+    networkInterface: z.string().optional().describe("Optional interface name to filter results"),
+  },
+  async ({ networkInterface }) => {
+    try {
+      let cmd = "powershell.exe -Command \"";
+      
+      if (networkInterface) {
+        cmd += "$adapters = Get-NetAdapter | Where-Object { $_.Name -like '*" + networkInterface + "*' }; ";
+      } else {
+        cmd += "$adapters = Get-NetAdapter; ";
+      }
+      
+      cmd += "foreach($adapter in $adapters) { " +
+            "Write-Output ('======== ' + $adapter.Name + ' (' + $adapter.Status + ') ========'); " +
+            "Write-Output ('Interface Description: ' + $adapter.InterfaceDescription); " +
+            "Write-Output ('MAC Address: ' + $adapter.MacAddress); " +
+            "Write-Output ('Link Speed: ' + $adapter.LinkSpeed); " +
+            "$ipconfig = Get-NetIPConfiguration -InterfaceIndex $adapter.ifIndex; " +
+            "Write-Output ('IP Address: ' + ($ipconfig.IPv4Address.IPAddress -join ', ')); " +
+            "Write-Output ('Subnet: ' + ($ipconfig.IPv4Address.PrefixLength -join ', ')); " +
+            "Write-Output ('Gateway: ' + ($ipconfig.IPv4DefaultGateway.NextHop -join ', ')); " +
+            "Write-Output ('DNS Servers: ' + ($ipconfig.DNSServer.ServerAddresses -join ', ')); " +
+            "Write-Output ''; " +
+            "}\"";
+      
+      const stdout = execSync(cmd);
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: stdout.toString(),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error retrieving network info: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Register the get_scheduled_tasks tool
+server.tool(
+  "get_scheduled_tasks",
+  "Retrieve information about scheduled tasks on the system. Can query all tasks or get detailed status of a specific task.",
+  {
+    action: z.enum(["query", "status"]).default("query").describe("Action to perform"),
+    taskName: z.string().optional().describe("Name of the specific task (optional)"),
+  },
+  async ({ action, taskName }) => {
+    try {
+      let cmd = "powershell.exe -Command \"";
+      
+      if (action === "query") {
+        if (taskName) {
+          cmd += "Get-ScheduledTask -TaskName '" + taskName + "' | Format-List TaskName, State, Description, Author, LastRunTime, NextRunTime, LastTaskResult";
+        } else {
+          cmd += "Get-ScheduledTask | Select-Object TaskName, State, Description | Format-Table -AutoSize | Out-String";
+        }
+      } else if (action === "status" && taskName) {
+        cmd += "Get-ScheduledTask -TaskName '" + taskName + "' | Format-List *; " +
+              "Get-ScheduledTaskInfo -TaskName '" + taskName + "' | Format-List *";
+      } else {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "For 'status' action, taskName parameter is required",
+            },
+          ],
+        };
+      }
+      
+      cmd += "\"";
+      
+      const stdout = execSync(cmd);
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: stdout.toString(),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error retrieving scheduled tasks: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Register the get_service_info tool
+server.tool(
+  "get_service_info",
+  "Retrieve information about Windows services. Can query all services or get detailed status of a specific service.",
+  {
+    action: z.enum(["query", "status"]).default("query").describe("Action to perform"),
+    serviceName: z.string().optional().describe("Service name to get info about (optional)"),
+  },
+  async ({ action, serviceName }) => {
+    try {
+      let cmd = "powershell.exe -Command \"";
+      
+      if (action === "query") {
+        if (serviceName) {
+          cmd += "Get-Service -Name '" + serviceName + "' | Format-List Name, DisplayName, Status, StartType, Description";
+        } else {
+          cmd += "Get-Service | Select-Object Name, DisplayName, Status, StartType | Format-Table -AutoSize | Out-String";
+        }
+      } else if (action === "status" && serviceName) {
+        cmd += "Get-Service -Name '" + serviceName + "' | Format-List *; " +
+              "Get-CimInstance -ClassName Win32_Service -Filter \"Name='" + serviceName + "'\" | Format-List *";
+      } else {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "For 'status' action, serviceName parameter is required",
+            },
+          ],
+        };
+      }
+      
+      cmd += "\"";
+      
+      const stdout = execSync(cmd);
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: stdout.toString(),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error retrieving service info: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Register the list_allowed_commands tool
+server.tool(
+  "list_allowed_commands",
+  "List all commands that are allowed to be executed by this server. This helps understand what operations are permitted.",
+  {},
+  async () => {
+    try {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "The following commands are allowed to be executed by this server:\n\n" +
+                  "- powershell.exe: Used for most system operations\n" +
+                  "- cmd.exe: Used for simple command execution\n\n" +
+                  "Note: All commands are executed with the same privileges as the user running this server."
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error listing allowed commands: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Register the execute_command tool
+server.tool(
+  "execute_command",
+  "Execute a Windows command and return its output. Only commands in the allowed list can be executed. This tool should be used for running simple commands like 'dir', 'echo', etc.",
+  {
+    command: z.string().describe("The command to execute"),
+    workingDir: z.string().optional().describe("Working directory for the command"),
+    timeout: z.number().default(30000).describe("Timeout in milliseconds"),
+  },
+  async ({ command, workingDir, timeout }) => {
+    try {
+      // Security check: Ensure only allowed commands are executed
+      const commandLower = command.toLowerCase();
+      
+      // Block potentially dangerous commands
+      const dangerousPatterns = [
+        'net user', 'net localgroup', 'netsh', 'format', 'rd /s', 'rmdir /s', 
+        'del /f', 'reg delete', 'shutdown', 'taskkill', 'sc delete', 'bcdedit',
+        'cacls', 'icacls', 'takeown', 'diskpart', 'cipher /w', 'schtasks /create'
+      ];
+      
+      // Check for dangerous patterns
+      if (dangerousPatterns.some(pattern => commandLower.includes(pattern.toLowerCase()))) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Command contains potentially dangerous operations and cannot be executed.",
+            },
+          ],
+        };
+      }
+      
+      const options: any = { timeout };
+      if (workingDir) {
+        options.cwd = workingDir;
+      }
+      
+      const stdout = execSync(`cmd.exe /c ${command}`, options);
+      return {
+        content: [
+          {
+            type: "text",
+            text: stdout.toString() || 'Command executed successfully (no output)',
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error executing command: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Register the execute_powershell tool
+server.tool(
+  "execute_powershell",
+  "Execute a PowerShell script and return its output. This allows for more complex operations and script execution. PowerShell must be in the allowed commands list.",
+  {
+    script: z.string().describe("PowerShell script to execute"),
+    workingDir: z.string().optional().describe("Working directory for the script"),
+    timeout: z.number().default(30000).describe("Timeout in milliseconds"),
+  },
+  async ({ script, workingDir, timeout }) => {
+    try {
+      // Security check: Ensure no dangerous operations
+      const scriptLower = script.toLowerCase();
+      
+      // Block potentially dangerous commands
+      const dangerousPatterns = [
+        'new-user', 'add-user', 'remove-item -recurse -force', 'format-volume', 
+        'reset-computer', 'stop-computer', 'restart-computer', 'stop-process -force',
+        'remove-item -force', 'set-executionpolicy', 'invoke-webrequest',
+        'start-bitstransfer', 'set-location', 'invoke-expression', 'iex', '& {',
+        'invoke-command', 'new-psdrive', 'remove-psdrive', 'enable-psremoting',
+        'new-service', 'remove-service', 'set-service'
+      ];
+      
+      // Check for dangerous patterns
+      if (dangerousPatterns.some(pattern => scriptLower.includes(pattern.toLowerCase()))) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Script contains potentially dangerous operations and cannot be executed.",
+            },
+          ],
+        };
+      }
+      
+      const options: any = { timeout };
+      if (workingDir) {
+        options.cwd = workingDir;
+      }
+      
+      const stdout = execSync(`powershell.exe -Command "${script}"`, options);
+      return {
+        content: [
+          {
+            type: "text",
+            text: stdout.toString() || 'PowerShell script executed successfully (no output)',
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Error executing PowerShell script: ${error}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Start the server
+async function main() {
   const transport = new StdioServerTransport();
-  
   await server.connect(transport);
-  console.error("Enhanced Windows Command Line Server running on stdio");
+  console.error("Windows Command Line MCP Server running on stdio");
 }
 
-runServer().catch((error) => {
-  console.error("Fatal error running server:", error);
+main().catch((error) => {
+  console.error("Fatal error in main():", error);
   process.exit(1);
 });
