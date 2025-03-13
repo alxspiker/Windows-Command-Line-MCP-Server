@@ -203,9 +203,8 @@ function createMCPServer() {
       version: "0.2.0", // Updated version
     },
     {
-      capabilities: {
-        tools: {},
-      },
+      // Initial empty tools configuration
+      tools: {},
     }
   );
 
@@ -218,7 +217,9 @@ function createMCPServer() {
 
   // Set up request handlers
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const baseTool = (await server.capabilities.tools) || {};
+    // Use the server's initial tools or an empty object
+    const baseTool = server.config.tools || {};
+    
     return {
       tools: [
         ...Object.values(baseTool),
