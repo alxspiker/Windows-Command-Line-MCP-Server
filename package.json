@@ -3,9 +3,15 @@
   "version": "0.2.0",
   "description": "A secure Model Context Protocol server for Windows command-line interactions",
   "main": "dist/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "npx tsc",
     "start": "node dist/index.js",
+    "dev": "npx tsc --watch",
+    "prepublishOnly": "npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
