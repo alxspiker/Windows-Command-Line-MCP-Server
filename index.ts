@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
   ToolSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { string, z } from "zod";
+import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
