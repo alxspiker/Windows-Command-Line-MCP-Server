@@ -8,10 +8,9 @@
 - Improved project creation and management capabilities
 
 ### Autonomous Development Capabilities
-- Screen reading and content extraction
-- IDE and text editor integration
-- Project scaffolding and boilerplate generation
+- Project scaffolding and boilerplate generation with the `create_project` tool
 - Integrated development workflow support
+- MCP Server bootstrapping with various templates
 
 ### New Allowed Commands
 
@@ -34,16 +33,13 @@
 - `python`
 - `pip`
 
-#### Screen and Window Interaction
-- Screen content reading via PowerShell/CLI tools
-- Window management commands
-- Screenshot capture
-
-### Screen Reading Capabilities
-We've added advanced screen reading functionality:
-- Capture entire screen or specific window contents
-- Extract text from screen regions
-- Analyze window titles and active applications
+### Project Creation Capabilities
+The new `create_project` tool allows AI models to:
+- Create MCP server projects with proper scaffolding
+- Select from various templates (basic, tools-only, resources-only, full)
+- Generate all necessary configuration files
+- Initialize npm and install dependencies
+- Set up a proper development environment
 
 ### Security Enhancements
 - Granular permission controls for development tools
@@ -58,7 +54,6 @@ New configuration options in `claude_desktop_config.json`:
     "commandline": {
       "developmentMode": true,
       "safeProjectRoot": "C:\\AIProjects",
-      "screenReading": true,
       "developmentTools": {
         "npm": true,
         "yarn": true,
@@ -69,41 +64,43 @@ New configuration options in `claude_desktop_config.json`:
 }
 ```
 
-### Example Autonomous Workflows
-- Create a new project
-- Install dependencies
-- Run initial setup
-- Launch development server
-- Capture and analyze output
-
-### Proposed New Tools
+### Implemented Tools
 
 1. **create_project**
    ```
    Parameters:
-   - type: String (e.g., "react", "node", "python")
-   - name: String
-   - template: String (optional)
+   - type: String (e.g., "basic", "tools-only", "resources-only", "full")
+   - name: String (project name)
+   - path: String (optional, custom path to create the project)
+   - initializeNpm: Boolean (optional, whether to initialize npm in the project)
+   - installDependencies: Boolean (optional, whether to install dependencies)
    ```
 
-2. **read_screen_content**
-   ```
-   Parameters:
-   - method: String ("full", "window", "region")
-   - options: Object (region coordinates, window title)
-   ```
+### Example Usage
 
-3. **ide_command**
-   ```
-   Parameters:
-   - ide: String (e.g., "vscode", "intellij")
-   - command: String
-   - project: String (optional)
-   ```
+Creating a basic MCP server project:
+```
+create_project({
+  type: "basic",
+  name: "my-mcp-server",
+  initializeNpm: true,
+  installDependencies: true
+})
+```
+
+Creating a tools-focused project in a custom location:
+```
+create_project({
+  type: "tools-only",
+  name: "tools-server",
+  path: "C:/Projects/mcp-tools-server",
+  initializeNpm: true,
+  installDependencies: false
+})
+```
 
 ## Roadmap
-- [ ] Implement screen reading modules
-- [ ] Create safe project scaffolding
+- [x] Create safe project scaffolding
 - [ ] Develop IDE interaction protocols
 - [ ] Enhance security sandbox
 - [ ] Add comprehensive logging
