@@ -21,19 +21,19 @@ const execAsync = promisify(exec);
 const args = process.argv.slice(2);
 let allowedCommands: string[] = [];
 let allowUnsafeCommands = false;
-
+const commandsList = [
+  'dir', 'echo', 'whoami', 'hostname', 'systeminfo', 'ver',
+  'ipconfig', 'ping', 'tasklist', 'time', 'date', 'type',
+  'find', 'findstr', 'where', 'help', 'netstat', 'sc',
+  'schtasks', 'powershell', 'powershell.exe'
+]
 // Process command line arguments
 if (args.includes('--allow-all')) {
   allowUnsafeCommands = true;
   console.error('WARNING: Running in unsafe mode. All commands are allowed.');
 } else if (args.length === 0) {
   // Default safe commands
-  allowedCommands = [
-    'dir', 'echo', 'whoami', 'hostname', 'systeminfo', 'ver',
-    'ipconfig', 'ping', 'tasklist', 'time', 'date', 'type',
-    'find', 'findstr', 'where', 'help', 'netstat', 'sc',
-    'schtasks', 'powershell', 'powershell.exe'
-  ];
+  allowedCommands = commandsList;
   console.error('No commands specified. Using default safe commands list.');
 } else {
   // Use the provided list of allowed commands
@@ -183,7 +183,11 @@ async function getSystemInfo(detail: 'basic' | 'full' = 'basic'): Promise<string
       const { stdout: computerName } = await execAsync('hostname');
       const { stdout: username } = await execAsync('whoami');
       
-      return `System Information:\n${sysInfo.toString()}\nComputer Name: ${computerName.toString().trim()}\nCurrent User: ${username.toString().trim()}`;
+      const formattedSysInfo = sysInfo.toString();
+      const formattedComputerName = computerName.toString().trim();
+      const formattedUsername = username.toString().trim();
+      
+      return `System Information:\n${formattedSysInfo}Computer Name: ${formattedComputerName}\nCurrent User: ${formattedUsername}`;
     } else {
       const { stdout } = await execAsync('systeminfo /FO LIST');
       return stdout.toString();
@@ -204,7 +208,7 @@ async function getNetworkInfo(interfaceName?: string): Promise<string> {
       
       // Split by double newline to get each interface section
       const sections = stdoutStr.split('\r\n\r\n');
-      const matchedSections = sections.filter(section => 
+      const matchedSections = sections.filter((section: string) => 
         section.toLowerCase().includes(interfaceName.toLowerCase())
       );
       
