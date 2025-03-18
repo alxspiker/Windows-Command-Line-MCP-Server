@@ -602,7 +602,7 @@ type ToolInput = z.infer<typeof ToolInputSchema>;
 const server = new Server(
   {
     name: "windows-commandline-server",
-    version: "0.1.0",
+    version: "0.3.0",
   },
   {
     capabilities: {
@@ -810,7 +810,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Windows Command Line Server running on stdio");
+  console.error("Windows Command Line MCP Server running on stdio");
   if (allowUnsafeCommands) {
     console.error("WARNING: Running in unsafe mode. All commands are allowed except dangerous ones.");
   } else {
