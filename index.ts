@@ -13,6 +13,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
 import path from 'path';
+import * as fs from 'fs/promises';
 
 // Promisify exec
 const execAsync = promisify(exec);
@@ -25,7 +26,10 @@ const commandsList = [
   'dir', 'echo', 'whoami', 'hostname', 'systeminfo', 'ver',
   'ipconfig', 'ping', 'tasklist', 'time', 'date', 'type',
   'find', 'findstr', 'where', 'help', 'netstat', 'sc',
-  'schtasks', 'powershell', 'powershell.exe'
+  'schtasks', 'powershell', 'powershell.exe',
+  // Development commands
+  'npm', 'yarn', 'pnpm', 'node', 'python', 'git',
+  'mkdir', 'touch', 'cp', 'mv'
 ]
 // Process command line arguments
 if (args.includes('--allow-all')) {
@@ -101,6 +105,14 @@ const ScheduledTasksArgsSchema = z.object({
 const ServiceInfoArgsSchema = z.object({
   serviceName: z.string().optional().describe('Service name to get info about (optional)'),
   action: z.enum(['query', 'status']).optional().default('query').describe('Action to perform'),
+});
+
+const CreateProjectArgsSchema = z.object({
+  type: z.enum(['basic', 'tools-only', 'resources-only', 'full']).describe('Type of MCP server project template'),
+  name: z.string().describe('Project name'),
+  path: z.string().optional().describe('Custom path to create the project (defaults to AIProjects directory)'),
+  initializeNpm: z.boolean().optional().default(true).describe('Initialize npm in the project'),
+  installDependencies: z.boolean().optional().default(true).describe('Install dependencies after creation')
 });
 
 // Tool implementation handlers
@@ -282,6 +294,307 @@ async function getAllowedCommands(): Promise<string> {
   }
 }
 
+async function createProject(
+  type: 'basic' | 'tools-only' | 'resources-only' | 'full',
+  name: string,
+  projectPath?: string,
+  initializeNpm: boolean = true,
+  installDependencies: boolean = true
+): Promise<string> {
+  try {
+    // Define the safe project root (can be configured)
+    const homeDir = os.homedir();
+    const safeProjectRootDir = path.join(homeDir, 'AIProjects');
+    
+    // Determine the project path
+    const projectDir = projectPath || path.join(safeProjectRootDir, name);
+    
+    // Create base directory structure
+    await execAsync(`mkdir "${projectDir}"`);
+    await execAsync(`mkdir "${path.join(projectDir, 'src')}"`);
+    
+    // Create package.json
+    const packageJson = {
+      name: name,
+      version: '0.1.0',
+      description: 'MCP Server created with Windows Command Line MCP Server',
+      type: 'module',
+      main: 'dist/index.js',
+      scripts: {
+        build: 'tsc',
+        start: 'node dist/index.js',
+        dev: 'tsc --watch & nodemon dist/index.js'
+      },
+      keywords: ['mcp', 'server', 'typescript'],
+      author: '',
+      license: 'MIT',
+      dependencies: {
+        '@modelcontextprotocol/sdk': '^0.2.0',
+        'zod': '^3.22.4'
+      },
+      devDependencies: {
+        '@types/node': '^20.11.0',
+        'typescript': '^5.3.3',
+        'nodemon': '^3.0.2'
+      }
+    };
+    
+    // Write package.json
+    await fs.writeFile(
+      path.join(projectDir, 'package.json'), 
+      JSON.stringify(packageJson, null, 2)
+    );
+    
+    // Create tsconfig.json
+    const tsConfig = {
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        esModuleInterop: true,
+        outDir: './dist',
+        strict: true,
+        skipLibCheck: true
+      },
+      include: ['src/**/*']
+    };
+    
+    // Write tsconfig.json
+    await fs.writeFile(
+      path.join(projectDir, 'tsconfig.json'), 
+      JSON.stringify(tsConfig, null, 2)
+    );
+    
+    // Create README.md
+    const readmeContent = `# ${name}
+
+A Model Context Protocol (MCP) server project created with Windows Command Line MCP Server.
+
+## Getting Started
+
+\`\`\`bash
+# Install dependencies
+npm install
+
+# Build the project
+npm run build
+
+# Start the server
+npm start
+\`\`\`
+
+## Project Structure
+
+- \`src/index.ts\`: Main entry point
+- \`src/tools/\`: Tool implementations
+- \`src/resources/\`: Resource implementations
+
+## Documentation
+
+- [Model Context Protocol](https://modelcontextprotocol.io)
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+`;
+    
+    // Write README.md
+    await fs.writeFile(path.join(projectDir, 'README.md'), readmeContent);
+    
+    // Create index.ts based on template type
+    let indexContent = '';
+    
+    if (type === 'basic' || type === 'full') {
+      indexContent = `import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+// Create server instance
+const server = new McpServer({
+  name: "${name}",
+  version: "0.1.0",
+});
+
+// Example tool
+server.tool(
+  "hello",
+  "Say hello to someone",
+  {
+    name: z.string().describe("Name to greet"),
+  },
+  async ({ name }) => {
+    return {
+      content: [
+        {
+          type: "text",
+          text: \`Hello, \${name}!\`,
+        },
+      ],
+    };
+  }
+);
+
+// Start the server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("${name} MCP Server running on stdio");
+}
+
+main().catch((error) => {
+  console.error("Fatal error in main():", error);
+  process.exit(1);
+});`;
+    } else if (type === 'tools-only') {
+      indexContent = `import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+// Create server instance
+const server = new McpServer({
+  name: "${name}",
+  version: "0.1.0",
+});
+
+// Example tool - Add two numbers
+server.tool(
+  "add",
+  "Add two numbers together",
+  {
+    a: z.number().describe("First number"),
+    b: z.number().describe("Second number"),
+  },
+  async ({ a, b }) => {
+    return {
+      content: [
+        {
+          type: "text",
+          text: \`\${a} + \${b} = \${a + b}\`,
+        },
+      ],
+    };
+  }
+);
+
+// Example tool - Get current time
+server.tool(
+  "current-time",
+  "Get the current server time",
+  {},
+  async () => {
+    return {
+      content: [
+        {
+          type: "text",
+          text: new Date().toISOString(),
+        },
+      ],
+    };
+  }
+);
+
+// Start the server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("${name} MCP Server running on stdio");
+}
+
+main().catch((error) => {
+  console.error("Fatal error in main():", error);
+  process.exit(1);
+});`;
+    } else if (type === 'resources-only') {
+      indexContent = `import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+// Create server instance
+const server = new McpServer({
+  name: "${name}",
+  version: "0.1.0",
+});
+
+// Example static resource
+server.resource(
+  "greeting",
+  "greeting://hello",
+  async (uri) => ({
+    contents: [{
+      uri: uri.href,
+      text: "Hello, world!"
+    }]
+  })
+);
+
+// Example dynamic resource with parameters
+server.resource(
+  "user-greeting",
+  new ResourceTemplate("greeting://{name}", { list: undefined }),
+  async (uri, { name }) => ({
+    contents: [{
+      uri: uri.href,
+      text: \`Hello, \${name}!\`
+    }]
+  })
+);
+
+// Start the server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("${name} MCP Server running on stdio");
+}
+
+main().catch((error) => {
+  console.error("Fatal error in main():", error);
+  process.exit(1);
+});`;
+    }
+    
+    // Write index.ts
+    await fs.writeFile(path.join(projectDir, 'src', 'index.ts'), indexContent);
+    
+    // Add .gitignore
+    const gitignoreContent = `# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+`;
+    
+    // Write .gitignore
+    await fs.writeFile(path.join(projectDir, '.gitignore'), gitignoreContent);
+    
+    // Initialize npm if requested
+    if (initializeNpm) {
+      await execAsync(`cd "${projectDir}" && npm init -y`);
+    }
+    
+    // Install dependencies if requested
+    if (installDependencies) {
+      await execAsync(`cd "${projectDir}" && npm install`);
+    }
+    
+    return `Successfully created MCP server project at ${projectDir}`;
+  } catch (error: any) {
+    throw new Error(`Failed to create project: ${error.message}`);
+  }
+}
+
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
 
@@ -361,6 +674,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
           required: [],
         },
+      },
+      {
+        name: "create_project",
+        description:
+          "Create a new MCP server project with proper scaffolding. This tool creates a directory structure " +
+          "and configuration files for a new Model Context Protocol server based on the typescript-sdk.",
+        inputSchema: zodToJsonSchema(CreateProjectArgsSchema) as ToolInput,
       },
     ],
   };
@@ -457,6 +777,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "list_allowed_commands": {
         const result = await getAllowedCommands();
+        return {
+          content: [{ type: "text", text: result }],
+        };
+      }
+
+      case "create_project": {
+        const parsed = CreateProjectArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for create_project: ${parsed.error}`);
+        }
+        const { type, name, path, initializeNpm, installDependencies } = parsed.data;
+        const result = await createProject(type, name, path, initializeNpm, installDependencies);
         return {
           content: [{ type: "text", text: result }],
         };
