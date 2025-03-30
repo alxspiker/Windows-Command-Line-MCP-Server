@@ -4,6 +4,7 @@ A secure Model Context Protocol (MCP) server that enables AI models to interact 
 
 ![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+[![smithery badge](https://smithery.ai/badge/@alxspiker/Windows-Command-Line-MCP-Server)](https://smithery.ai/server/@alxspiker/Windows-Command-Line-MCP-Server)
 
 ## Overview
 
@@ -29,6 +30,14 @@ The Windows Command Line MCP Server provides a robust, secure bridge between AI 
 - Manage processes and services
 
 ## Installation
+
+### Installing via Smithery
+
+To install Windows Command Line MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@alxspiker/Windows-Command-Line-MCP-Server):
+
+```bash
+npx -y @smithery/cli install @alxspiker/Windows-Command-Line-MCP-Server --client claude
+```
 
 ### Prerequisites
 - Node.js 16 or later
