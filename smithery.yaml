@@ -3,33 +3,13 @@
 startCommand:
   type: stdio
   configSchema:
-    windowsHost:
-      type: string
-      default: "127.0.0.1"
-      description: IP address of your Windows host
-    windowsPort:
-      type: number
-      default: 3099
-      description: Port of the Windows bridge server
-    enableBridge:
-      type: boolean
-      default: false
-      description: Enable Windows bridge
-  commandFunction: |
+    # JSON Schema defining the configuration options for the MCP.
+    {}
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    |-
     (config) => ({
       command: 'node',
-      args: ['dist/index.js'],
-      env: {
-        'ENABLE_WINDOWS_BRIDGE': config.enableBridge ? 'true' : 'false',
-        'WINDOWS_BRIDGE_HOST': config.windowsHost,
-        'WINDOWS_BRIDGE_PORT': config.windowsPort.toString()
-      }
+      args: ['dist/index.js']
     })
-  exampleConfig:
-    windowsHost: "127.0.0.1"
-    windowsPort: 3099
-    enableBridge: false
-
-build:
-  dockerfile: "./Dockerfile"
-  dockerBuildPath: "."
+  exampleConfig: {}
