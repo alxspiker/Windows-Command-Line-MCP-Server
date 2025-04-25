@@ -1,3 +1,5 @@
+[![MseeP Badge](https://mseep.net/pr/alxspiker-windows-command-line-mcp-server-badge.jpg)](https://mseep.ai/app/alxspiker-windows-command-line-mcp-server)
+
 # Windows Command Line MCP Server
 
 A secure Model Context Protocol (MCP) server that enables AI models to interact with Windows command-line functionality safely and efficiently.
